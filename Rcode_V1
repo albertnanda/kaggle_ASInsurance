@@ -1,0 +1,218 @@
+#Kaggle Competition
+rm(list=ls())
+gc()
+#load libraries
+require(caret)
+require(corrplot)
+require(car)
+library(RevoUtilsMath)
+require(earth)
+require(randomForest)
+library(rpart)
+library(h2o)
+library(data.table)
+library(ggplot2)
+
+setwd("C:/Users/Vyas Saurabh/Desktop/Projects/Global projects/AS Insurance")
+raw_data=read.csv("train.csv",header=T, stringsAsFactors = TRUE)
+names(raw_data)
+nrow(raw_data)
+
+
+#Correlation data
+corr_data=raw_data[sapply(raw_data, is.numeric)]
+names(corr_data)
+corr_data=corr_data[-1]
+#correlation
+corr_mat=cor(corr_data)
+corrplot(corr_mat, order = "hclust", tl.cex = .35)
+(high_corr=findCorrelation(corr_mat,.9))
+findLinearCombos(corr_data)
+
+
+#plot to see the relations
+paste("~",paste(names(corr_data),collapse = "+"))
+plot(cont1,loss)
+abline(lm(loss~cont1), col="red") # regression line (y~x)
+plot(cont14,loss)
+abline(lm(loss~cont14), col="red") # regression line (y~x)
+
+
+scatterplotMatrix(~loss+cont1+cont2+cont3+cont4+cont5+cont6+cont7+cont8+cont9+cont10+cont11+cont12+cont13+cont14,data = corr_data)
+
+#outlier detection and removal
+
+# zero and near zero variance
+
+Data_NZV = nearZeroVar(raw_data, saveMetrics = TRUE)
+Data_NZV
+Data_NZV[Data_NZV[,"zeroVar"] > 0, ]
+Data_NZV[Data_NZV[,"nzv"] > 0, ] 
+
+NZV_vars <- row.names(Data_NZV[Data_NZV[,"nzv"] > 0, ] )
+NZV_vars
+
+Anova.p = 0
+for (i in 1: length(NZV_vars)){
+formula.aov <- as.formula(paste("loss~", NZV_vars[i]))
+fit <- aov(formula.aov, data=raw_data)
+Anova.p[i] <- summary(fit)[[1]][["Pr(>F)"]][[1]]
+print(raw_data$loss,raw_data)
+}
+
+length(as.name(paste("raw_data$", "cat4")))
+
+NZV_vars[Anova.p > 0.01]
+
+
+# understading categorical variables
+dt <- data.table(raw_data)
+length(levels(dt$cat113))
+Cat113_Summary = dt[,list(mean=mean(loss),sd=sd(loss), count = .N),by=cat113]
+Cat113_Summary = Cat113_Summary[Cat113_Summary$count>50,]
+Cat113_Summary[order(Cat113_Summary$mean),]
+Cat113_Summary$cat113[Cat113_Summary$count<50]
+
+density_check = dt[dt$cat113 == "BC" | dt$cat113 == "AU"| dt$cat113 == "AW"| dt$cat113 == "S"
+                   | dt$cat113 == "BG" | dt$cat113 == "AK" ,]
+ggplot(density_check,aes(density_check$loss,colour = density_check$cat113,
+                         fill = density_check$cat113))  + geom_density(alpha = 0.25)
+
+
+#splitting train and test data
+index <- createDataPartition(y = raw_data$loss, p = 0.5, list = F)
+#index = sort(sample(nrow(raw_data), nrow(raw_data)*.5))
+train=raw_data[index,]
+test=raw_data[-index,]
+names(train)
+summary(train)
+nrow(train)
+
+#dummy vars
+
+dummy_vars_para=dummyVars(~.,data = train,fullRank = T)
+train_dmy_raw=as.data.frame(predict(dummy_vars_para,newdata  =train))
+test_dmy_raw=as.data.frame(predict(dummy_vars_para,newdata  =test))
+train_dmy <- train_dmy_raw
+test_dmy <- test_dmy_raw
+all(train$id == train_dmy$id)
+ncol(train_dmy)
+nrow(train_dmy)
+
+# find linear combos and colinearity
+Removed_index = findLinearCombos(train_dmy)
+Removed_index$remove
+length(Removed_index$remove)
+ncol(train_dmy)
+attach(train_dmy)
+train_dmy <- train_dmy[,-c(Removed_index$remove,grep("cat99.F",names(train_dmy)))] # 162 column removed due to aliasing
+#train_dmy <- train_dmy[,-c(Removed_index$remove)]
+ncol(train_dmy)
+
+#Simple Linear Regression
+slm=lm(loss~.-id,data=train_dmy)
+summary(slm)$adj.r.squared
+(slm_RMSE=mean(slm$residuals^2))
+slm_error = (slm_RMSE/mean(train_dmy$loss))
+alias(slm)
+summary(slm)
+#save the results in a data frame
+(Results_model = data.frame(model = "slm", RMSE = slm_RMSE, RMSE.mean = slm_error))
+
+# Feature selection using forward selection
+lm_model_null <- lm(loss ~ 1, data = train_dmy)
+lm_model_F <- step(lm_model_null, scope = list(lower = lm_model_null, upper = slm),
+                       direction = "forward")
+
+# Feature selection using best subset selection
+library(leaps)
+lm_bestsubset =regsubsets(loss???.-id,data = train_dmy, nvmax = 10)
+
+#save the results
+Results_model = rbind(Results_model,data.frame(model = "lm_model_F", RMSE = slm_RMSE_F)
+
+compute_mse <- function(predictions, actual) {
+                        mean( (predictions - actual) ^ 2 )
+}                      
+                      
+                      
+library(glmnet)
+(lambdas <- 10^ seq (6,-3, length =50))
+
+X = as.matrix(train_dmy[,-c(1,ncol(train_dmy))])
+Y = as.matrix(train_dmy[,"loss"])
+
+models_lasso <- glmnet(X, Y,alpha = 1, lambda = lambdas)
+plot(models_lasso, xvar = "lambda", main = "Lasso\n")
+(tt=summary(models_lasso))                       
+lasso.cv <- cv.glmnet(X, Y, alpha = 1)
+(lambda_lasso <- lasso.cv$lambda.min)
+plot(lasso.cv)
+
+lasso_predictions <- predict(models_lasso, s = lambda_lasso, newx = X)
+(MSE_lasso =  compute_mse(lasso_predictions, train_dmy$loss))
+MSE_lasso/mean(train_dmy$loss)
+
+#Mars
+marsFit<-earth(loss~.-id,data=train)
+marsFit
+marsvar = varImp(marsFit)
+selectedvar <- rownames(marsvar)[marsvar$Overall > 0]
+selectedvar <- paste(selectedvar,collapse = "+")
+selectedvar
+plotmo(marsFit)
+varImp(marsFit)
+names(marsFit)
+marsFit$terms
+
+slm1 <- lm(loss~cat80+cat57+cat79+cat12+cont7+cat81+cont2+cat1+cat53+cat2+cat26+cat37+cat38+cat87+cat4+cat72+cont14+cat44+cat100+cat49+cat13+cat76+cat10+cat116+cat108+cont1+cont11+cat52+cat82+cat91+cat100+cat5, data = train)
+summary(slm1)
+
+
+str(train)
+levels(train$cat116)
+detach(train_dmy)
+detach(train)
+attach(train)
+
+Tree.fit <- rpart(loss~cat80+cat57+cat79+cat12+cont7+cat81+cont2+cat1+cat53+cat2+cat26+cat37+cat38+cat87+cat4+cat72+cont14+cat44+cat100+cat49+cat13+cat76+cat10+cat116+cat108+cont1+cont11+cat52+cat82+cat91+cat100+cat5, data = train, method = "anova")
+Tree.fit.1 <- rpart(loss~.-id, data = train, method = "anova")
+
+
+summary(Tree.fit)
+Tree.fit$cptable
+printcp(Tree.fit)
+rsq.rpart(Tree.fit)
+
+summary(Tree.fit.1)
+printcp(Tree.fit.1)
+rsq.rpart(Tree.fit.1)
+#,cat79,cat12,cont7,cat81,cont2,cat1,cat53,cat2,cat26,cat37,cat38,cat87,cat4,cat72,cont14,cat44,cat100,cat49,cat13,cat76,cat10,cat108,cont1,cont11,cat52,cat82,cat91,cat100,cat5), loss,
+levels(train$cat116)
+str(train[,99:118])
+myvars <- names(train) %in% c("id","cat109","cat110","cat113","cat116","cat116","loss")
+myvars
+RF.X = train[c("cat80","cat57","cat79","cat12","cont7","cat81","cont2","cat1","cat53","cat2","cat26","cat37","cat38","cat87","cat4","cat72","cont14","cat44","cat100","cat49","cat13","cat76","cat10","cat108","cont1","cont11","cat52","cat82","cat91","cat100","cat5")]
+head(RF.X)
+RF.Y = train[,c("loss")]
+RF.fit <- randomForest(RF.X, RF.Y, data = train,ntree = 20)
+RF.fit
+
+
+localH2O <- h2o.init(nthreads = -1)
+h2o.init()
+mean(train_tr$loss)
+
+train.h2o.x <- c(2:(ncol(train_tr)-1))
+train.h2o.y <- ncol(train_tr)
+names(train_tr)
+train.h2o <- as.h2o(train_tr)
+
+rforest.model <- h2o.randomForest(y=train.h2o.y, x=train.h2o.x, training_frame = train.h2o, ntrees = 1000, mtries = 45, max_depth = 10, seed = 1122)
+rforest.model
+test.h2o <- as.h2o(test_tr)
+pr=as.data.frame(h2o.predict(rforest.model, test.h2o))
+SSE=sum((pr-test_tr$loss)^2)
+(MSSE=SSE/nrow(test_tr))
+RMSE=sqrt(MSSE)
+RMSE
